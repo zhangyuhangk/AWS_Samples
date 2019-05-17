@@ -9,3 +9,6 @@ Create a custom resource in the template. Whenever the custom resource is create
 * The alias of key is optional. I just like it to be readable. By the way, the `AliasName` needs to begin with 'alias/'.
 * Normally, it's not a good idea to put inline code of Lambda function in the template. Since it's just a demo, I'd like to keep it simple. One extra benefit to do so is that I can directly use parameters, such as ${LogGroupName} and ${MyKey.Arn}.
 * If anything exception occurs in the Lambda function, the CloudFormation gets stuck, because it doesn't receive any notification and doesn't know whether to go on or quit. When that happens, I have to delete the whole stack. Even I do that, the CloudFormation will get stuck in `DELETE_IN_PROGRESS` state again, because it needs to call the Lambda function to while deleting the custom resource. I don't know how long will it takes, but it will eventually switch to the `DELETE_FAILED` state, then you can delete it again. This time, it will be quick.
+
+# References
+* [Custom Resources](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-custom-resources.html)
