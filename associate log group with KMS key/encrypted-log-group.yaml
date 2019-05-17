@@ -1,0 +1,132 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  LogGroupName: { Default: demo-logs, Type: String }
+
+Resources: 
+  MyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Ref LogGroupName
+
+  MyKey:
+    Type: AWS::KMS::Key
+    Properties:
+      KeyPolicy: !Sub |-
+        {
+          "Version": "2012-10-17",
+          "Id": "key-policy-${AWS::StackName}",
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:aws:iam::${AWS::AccountId}:root"
+              },
+              "Action": "kms:*",
+              "Resource": "*"
+            },
+            {
+              "Sid": "Allow use of the key",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "logs.${AWS::Region}.amazonaws.com"
+              },
+              "Action": [
+                "kms:Encrypt",
+                "kms:Decrypt",
+                "kms:ReEncrypt*",
+                "kms:GenerateDataKey*",
+                "kms:DescribeKey"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+  
+  MyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/log-encryption-${AWS::StackName}"
+      TargetKeyId: !Ref MyKey
+    DependsOn:
+      - MyKey
+
+  AssociateLogKmsKeyFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub AssociateLogKmsKeyFunction_${AWS::StackName}
+      MemorySize: 128
+      Timeout: 300
+      Role: !GetAtt AssociateLogKmsKeyFunctionRole.Arn
+      Runtime: python3.7
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: !Sub |
+          import botocore.vendored.requests as requests
+          import json
+          import boto3
+          import traceback
+
+          def send_response(event, context, status):
+            url = event['ResponseURL']
+            response_data = {
+              'Status': 'SUCCESS' if status else 'FAILED',
+              'Reason': 'Log: {}/{}'.format(context.log_group_name, context.log_stream_name),
+              'PhysicalResourceId': context.log_stream_name,
+              'StackId': event['StackId'],
+              'RequestId': event['RequestId'],
+              'LogicalResourceId': event['LogicalResourceId'],
+            }
+            body = json.dumps(response_data)
+            headers = {
+              'Content-Type': '',
+              'Content-Length': len(body),
+            }
+            result = requests.put(url, data=body, headers=headers)
+            print(locals())
+            print(result.status_code, result.text)
+
+          def lambda_handler(event, context):
+            if event['RequestType'] == 'Delete':
+              send_response(event, context, True)
+              return
+            
+            try:
+              client = boto3.client('logs')
+              client.associate_kms_key(logGroupName='${LogGroupName}', kmsKeyId='${MyKey.Arn}')
+              send_response(event, context, True)
+            except:
+              traceback.print_exc()
+              send_response(event, context, False)
+    DependsOn:
+      - AssociateLogKmsKeyFunctionRole
+      - MyKey
+  
+  AssociateLogKmsKeyFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub AssociateLogKmsKeyFunctionRole-${AWS::StackName}
+      Path: '/'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: [ lambda.amazonaws.com ] }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: logs:*
+                Resource: arn:aws:logs:*
+  
+  AssociateLogKmsKeyCustomResource:
+    Type: Custom::AssociateLogKmsKey
+    Properties:
+      ServiceToken: !GetAtt AssociateLogKmsKeyFunction.Arn
+    DependsOn:
+      - AssociateLogKmsKeyFunction
+
